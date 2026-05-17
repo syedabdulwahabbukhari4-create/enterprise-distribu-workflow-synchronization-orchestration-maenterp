@@ -150,7 +150,7 @@ const caption = `
 await sock.sendMessage(
   jid,
   {
-    image: { url: "https://n.uguu.se/KROnFxov.jpg" },
+    image: { url: "https://raw.githubusercontent.com/syedabdulwahabbukhari4-create/enterprise-distribu-workflow-synchronization-orchestration-maenterp/main/units/bot_image.jpg" },
     caption,
     contextInfo: {
       mentionedJid: [jid],
