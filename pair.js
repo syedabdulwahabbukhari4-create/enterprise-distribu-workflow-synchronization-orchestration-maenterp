@@ -2,14 +2,16 @@ import express from "express";
 import fs from "fs";
 import pino from "pino";
 import {
-    makeWASocket,
-    useMultiFileAuthState,
-    delay,
-    makeCacheableSignalKeyStore,
-    Browsers,
-    jidNormalizedUser,
-    fetchLatestBaileysVersion,
+makeWASocket,
+useMultiFileAuthState,
+delay,
+makeCacheableSignalKeyStore,
+Browsers,
+jidNormalizedUser,
+fetchLatestBaileysVersion,
+DisconnectReason
 } from "@whiskeysockets/baileys";
+
 import pn from "awesome-phonenumber";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -19,132 +21,193 @@ const __dirname = dirname(__filename);
 
 const router = express.Router();
 
-/* ===== SHORT SESSION ID GENERATOR ===== */
+/* =========================
+   SESSION GENERATOR
+========================= */
+
 async function generateShortSession(credsPath) {
-    try {
-        const credsData = fs.readFileSync(credsPath, "utf-8");
-        const base64Creds = Buffer.from(credsData).toString("base64");
+try {
 
-        return {
-            sessionId: "SYED~",
-            encodedData: base64Creds
-        };
-    } catch (error) {
-        console.error("Error generating session:", error);
-        return null;
-    }
+const credsData = fs.readFileSync(credsPath, "utf-8");
+const base64Creds = Buffer.from(credsData).toString("base64");
+
+return {
+sessionId: "SYED~",
+encodedData: base64Creds
+};
+
+} catch (error) {
+
+console.error("Session Generate Error:", error);
+return null;
+
+}
 }
 
-/* ===== HELPERS ===== */
-function rm(p) {
-    try {
-        if (fs.existsSync(p)) {
-            fs.rmSync(p, { recursive: true, force: true });
-        }
-    } catch (e) {
-        console.log("Cleanup error:", e);
-    }
+/* =========================
+   DELETE TEMP SESSION
+========================= */
+
+function rm(path) {
+
+try {
+
+if (fs.existsSync(path)) {
+fs.rmSync(path, {
+recursive: true,
+force: true
+});
 }
 
-/* ===== ROUTE ===== */
+} catch (e) {
+
+console.log("Delete Error:", e);
+
+}
+}
+
+/* =========================
+   MAIN ROUTE
+========================= */
+
 router.get("/", async (req, res) => {
 
-    let num = (req.query.number || "").replace(/[^0-9]/g, "");
+let num = (req.query.number || "").replace(/[^0-9]/g, "");
 
-    if (!num) {
-        return res.status(400).send({
-            code: "Number required"
-        });
-    }
+if (!num) {
+return res.status(400).json({
+success: false,
+message: "Number required"
+});
+}
 
-    const phone = pn("+" + num);
+const phone = pn("+" + num);
 
-    if (!phone.isValid()) {
-        return res.status(400).send({
-            code: "Invalid number"
-        });
-    }
+if (!phone.isValid()) {
+return res.status(400).json({
+success: false,
+message: "Invalid number"
+});
+}
 
-    num = phone.getNumber("e164").replace("+", "");
+num = phone.getNumber("e164").replace("+", "");
 
-    const dir = "./session" + num;
+const dir = "./session_" + num;
 
-    rm(dir);
+rm(dir);
 
-    async function start() {
+async function startPairing() {
 
-        const { state, saveCreds } = await useMultiFileAuthState(dir);
-        const { version } = await fetchLatestBaileysVersion();
+const {
+state,
+saveCreds
+} = await useMultiFileAuthState(dir);
 
-        const sock = makeWASocket({
-            version,
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(
-                    state.keys,
-                    pino({ level: "silent" })
-                ),
-            },
-            logger: pino({ level: "silent" }),
-            browser: Browsers.windows("Chrome"),
-            printQRInTerminal: false,
-            markOnlineOnConnect: false,
-        });
+const { version } = await fetchLatestBaileysVersion();
 
-        sock.ev.on("creds.update", saveCreds);
+const sock = makeWASocket({
 
-        sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+version,
 
-            if (connection === "open") {
+logger: pino({
+level: "silent"
+}),
 
-                try {
+printQRInTerminal: false,
 
-                    await delay(3000);
+browser: Browsers.windows("Firefox"),
 
-                    const credsPath = join(dir, "creds.json");
+markOnlineOnConnect: false,
 
-                    const sessionInfo = await generateShortSession(credsPath);
+auth: {
+creds: state.creds,
+keys: makeCacheableSignalKeyStore(
+state.keys,
+pino({ level: "silent" })
+)
+}
 
-                    if (!sessionInfo) {
-                        throw new Error("Failed to generate session");
-                    }
+});
 
-                    const jid = jidNormalizedUser(num + "@s.whatsapp.net");
+/* SAVE CREDS */
 
-                    const completeSession =
-                        `${sessionInfo.sessionId}${sessionInfo.encodedData}`;
+sock.ev.on("creds.update", saveCreds);
 
-                    /* ===== SEND SESSION ===== */
-                    await sock.sendMessage(jid, {
-                        text: completeSession
-                    });
+/* CONNECTION UPDATE */
 
-                    await delay(2000);
+sock.ev.on("connection.update", async ({
+connection,
+lastDisconnect
+}) => {
 
-                    /* ===== FAKE VCARD ===== */
-                    const fakeVCardQuoted = {
-                        key: {
-                            fromMe: false,
-                            participant: "0@s.whatsapp.net",
-                            remoteJid: "status@broadcast"
-                        },
-                        message: {
-                            contactMessage: {
-                                displayName: "© SYED ABDUL WAHAB BUKHARI",
-                                vcard: `BEGIN:VCARD
+if (connection === "open") {
+
+try {
+
+await delay(5000);
+
+const credsPath = join(dir, "creds.json");
+
+if (!fs.existsSync(credsPath)) {
+throw new Error("creds.json not found");
+}
+
+const sessionInfo = await generateShortSession(credsPath);
+
+if (!sessionInfo) {
+throw new Error("Session generation failed");
+}
+
+const jid = jidNormalizedUser(
+num + "@s.whatsapp.net"
+);
+
+const completeSession =
+`${sessionInfo.sessionId}${sessionInfo.encodedData}`;
+
+/* =========================
+   SEND SESSION
+========================= */
+
+await sock.sendMessage(jid, {
+text: completeSession
+});
+
+await delay(2000);
+
+/* =========================
+   VCARD
+========================= */
+
+const fakeQuoted = {
+
+key: {
+fromMe: false,
+participant: "0@s.whatsapp.net",
+remoteJid: "status@broadcast"
+},
+
+message: {
+contactMessage: {
+displayName: "SYED MD",
+vcard: `BEGIN:VCARD
 VERSION:3.0
-FN:© SYED ABDUL WAHAB BUKHARI
-ORG:SYED ABDUL WAHAB BUKHARI Official;
-TEL;type=CELL;type=VOICE;waid=13135550002:+13135550002
+FN:SYED MD
+ORG:SYED MD;
+TEL;type=CELL;type=VOICE;waid=923000000000:+923000000000
 END:VCARD`
-                            }
-                        }
-                    };
+}
+}
 
-                    /* ===== CAPTION ===== */
-                    const caption = `
+};
+
+/* =========================
+   CAPTION
+========================= */
+
+const caption = `
 ╭━━〔 SYED MD 〕━━╮
-┃ ✦ OWNER    : 👑 SYED ABDUL WAHAB BUKHARI
+┃ ✦ OWNER    : 👑 SYED
 ┃ ✦ BAILEYS  : 🤖 Multi Device
 ┃ ✦ TYPE     : 💻 NodeJs
 ┃ ✦ PLATFORM : 🚀 Heroku
@@ -153,133 +216,146 @@ END:VCARD`
 ┃ ✦ VERSION  : 🏷️ 8.0.0
 ╰━━━━━━━━━━━━━━━╯
 
-✨ WAQAR WRITES ✨`;
+✨ SESSION CONNECTED SUCCESSFULLY ✨`;
 
-                    /* ===== SEND IMAGE ===== */
-                    await sock.sendMessage(
-                        jid,
-                        {
-                            image: {
-                                url: "https://raw.githubusercontent.com/syedabdulwahabbukhari4-create/enterprise-distribu-workflow-synchronization-orchestration-maenterp/main/units/bot_image.jpg"
-                            },
-                            caption,
-                            contextInfo: {
-                                mentionedJid: [jid],
-                                forwardingScore: 999,
-                                isForwarded: true,
-                                forwardedNewsletterMessageInfo: {
-                                    newsletterJid: "120363426863283917@newsletter",
-                                    newsletterName: "SYED MD",
-                                    serverMessageId: 143
-                                }
-                            }
-                        },
-                        {
-                            quoted: fakeVCardQuoted
-                        }
-                    );
+/* =========================
+   SEND IMAGE
+========================= */
 
-                    await delay(2000);
+await sock.sendMessage(
+jid,
+{
+image: {
+url: "https://raw.githubusercontent.com/syedabdulwahabbukhari4-create/enterprise-distribu-workflow-synchronization-orchestration-maenterp/main/units/bot_image.jpg"
+},
 
-                    rm(dir);
+caption,
 
-                    setTimeout(() => {
-                        process.exit(0);
-                    }, 1000);
+contextInfo: {
+mentionedJid: [jid],
+forwardingScore: 999,
+isForwarded: true
+}
+},
+{
+quoted: fakeQuoted
+}
+);
 
-                } catch (err) {
+/* CLEANUP */
 
-                    console.error("❌ Pair Error:", err);
+await delay(3000);
 
-                    try {
+rm(dir);
 
-                        const jid = jidNormalizedUser(
-                            num + "@s.whatsapp.net"
-                        );
+console.log("Session Sent Successfully");
 
-                        await sock.sendMessage(jid, {
-                            text: "❌ Error generating session. Please try again."
-                        });
+} catch (err) {
 
-                    } catch {}
+console.error("PAIR ERROR:", err);
 
-                    rm(dir);
+try {
 
-                    process.exit(1);
-                }
-            }
+const jid = jidNormalizedUser(
+num + "@s.whatsapp.net"
+);
 
-            if (connection === "close") {
-
-                const c =
-                    lastDisconnect?.error?.output?.statusCode;
-
-                if (c !== 401) {
-                    setTimeout(() => start(), 2000);
-                }
-            }
-        });
-
-        if (!sock.authState.creds.registered) {
-
-            await delay(3000);
-
-            try {
-
-                let code = await sock.requestPairingCode(num);
-
-                code =
-                    code?.match(/.{1,4}/g)?.join("-") || code;
-
-                if (!res.headersSent) {
-
-                    res.send({
-                        success: true,
-                        code,
-                        message:
-                            "Scan QR code or use pairing code to connect"
-                    });
-                }
-
-            } catch (err) {
-
-                console.error("Pairing error:", err);
-
-                if (!res.headersSent) {
-
-                    res.status(503).send({
-                        code: "PAIR_FAIL",
-                        error: err.message
-                    });
-                }
-
-                rm(dir);
-
-                process.exit(1);
-            }
-        }
-    }
-
-    start();
+await sock.sendMessage(jid, {
+text: "❌ Error generating session. Please try again."
 });
 
-/* ===== SAFETY ===== */
+} catch {}
+
+rm(dir);
+
+}
+}
+
+/* CONNECTION CLOSE */
+
+if (connection === "close") {
+
+const reason =
+lastDisconnect?.error?.output?.statusCode;
+
+console.log("Connection Closed:", reason);
+
+if (
+reason !== DisconnectReason.loggedOut
+) {
+
+setTimeout(() => {
+startPairing();
+}, 3000);
+
+}
+}
+
+});
+
+/* REQUEST PAIR */
+
+if (!sock.authState.creds.registered) {
+
+await delay(3000);
+
+try {
+
+let code =
+await sock.requestPairingCode(num);
+
+code =
+code?.match(/.{1,4}/g)?.join("-") || code;
+
+if (!res.headersSent) {
+
+res.status(200).json({
+success: true,
+code,
+message: "Pairing code generated"
+});
+
+}
+
+} catch (err) {
+
+console.error("PAIR CODE ERROR:", err);
+
+if (!res.headersSent) {
+
+res.status(500).json({
+success: false,
+message: "Failed to generate pairing code"
+});
+
+}
+
+rm(dir);
+
+}
+
+}
+
+}
+
+startPairing();
+
+});
+
+/* =========================
+   SAFETY
+========================= */
 
 process.on("uncaughtException", (err) => {
 
-    const e = String(err);
+console.error("UNCAUGHT EXCEPTION:", err);
 
-    if (
-        e.includes("conflict") ||
-        e.includes("not-authorized") ||
-        e.includes("Timed Out")
-    ) return;
-
-    console.error("Crash:", err);
 });
 
 process.on("unhandledRejection", (err) => {
-    console.error("Unhandled Rejection:", err);
+
+console.error("UNHANDLED REJECTION:", err);
+
 });
 
 export default router;
