@@ -11,61 +11,68 @@ import {
     fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import pn from "awesome-phonenumber";
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const router = express.Router();
 
-/* ===== SHORT SESSION ID GENERATOR WITH BASE64 ENCODING ===== */
+/* ===== SHORT SESSION ID GENERATOR ===== */
 async function generateShortSession(credsPath) {
     try {
-        // Read the actual creds.json file
-        const credsData = fs.readFileSync(credsPath, 'utf-8');
-        
-        // Encode the credentials to base64
-        const base64Creds = Buffer.from(credsData).toString('base64');
-        
-        // Generate session ID with prefix
-        const y = new Date().getFullYear();
-        const r = Math.random().toString(36).substring(2, 6).toUpperCase();
-        const sessionId = `SYED~`;
-        
-        // Return both session ID and encoded data
+        const credsData = fs.readFileSync(credsPath, "utf-8");
+        const base64Creds = Buffer.from(credsData).toString("base64");
+
         return {
-            sessionId: sessionId,
+            sessionId: "SYED~",
             encodedData: base64Creds
         };
     } catch (error) {
-        console.error("Error generating short session:", error);
+        console.error("Error generating session:", error);
         return null;
     }
 }
 
 /* ===== HELPERS ===== */
 function rm(p) {
-    try { 
-        if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); 
-    } catch(e) {
+    try {
+        if (fs.existsSync(p)) {
+            fs.rmSync(p, { recursive: true, force: true });
+        }
+    } catch (e) {
         console.log("Cleanup error:", e);
     }
 }
 
 /* ===== ROUTE ===== */
 router.get("/", async (req, res) => {
+
     let num = (req.query.number || "").replace(/[^0-9]/g, "");
-    if (!num) return res.status(400).send({ code: "Number required" });
+
+    if (!num) {
+        return res.status(400).send({
+            code: "Number required"
+        });
+    }
 
     const phone = pn("+" + num);
-    if (!phone.isValid()) return res.status(400).send({ code: "Invalid number" });
+
+    if (!phone.isValid()) {
+        return res.status(400).send({
+            code: "Invalid number"
+        });
+    }
+
     num = phone.getNumber("e164").replace("+", "");
 
     const dir = "./session" + num;
+
     rm(dir);
 
     async function start() {
+
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         const { version } = await fetchLatestBaileysVersion();
 
@@ -73,9 +80,12 @@ router.get("/", async (req, res) => {
             version,
             auth: {
                 creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })),
+                keys: makeCacheableSignalKeyStore(
+                    state.keys,
+                    pino({ level: "silent" })
+                ),
             },
-            logger: pino({ level: "fatal" }),
+            logger: pino({ level: "silent" }),
             browser: Browsers.windows("Chrome"),
             printQRInTerminal: false,
             markOnlineOnConnect: false,
@@ -84,114 +94,126 @@ router.get("/", async (req, res) => {
         sock.ev.on("creds.update", saveCreds);
 
         sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+
             if (connection === "open") {
+
                 try {
-                    // Wait for creds to be saved
+
                     await delay(3000);
-                    
-                    // Path to creds.json
-                    const credsPath = join(dir, 'creds.json');
-                    
-                    // Generate short session with encoded data
+
+                    const credsPath = join(dir, "creds.json");
+
                     const sessionInfo = await generateShortSession(credsPath);
-                    
+
                     if (!sessionInfo) {
                         throw new Error("Failed to generate session");
                     }
 
                     const jid = jidNormalizedUser(num + "@s.whatsapp.net");
 
-                    // 1️⃣ Send the COMPLETE session string (SESSION_ID + base64 data)
-                    const completeSession = `${sessionInfo.sessionId}${sessionInfo.encodedData}`;
-                    await sock.sendMessage(jid, { 
-                        text: `${completeSession}` 
+                    const completeSession =
+                        `${sessionInfo.sessionId}${sessionInfo.encodedData}`;
+
+                    /* ===== SEND SESSION ===== */
+                    await sock.sendMessage(jid, {
+                        text: completeSession
                     });
 
-                    // 2️⃣ Wait 2 seconds
                     await delay(2000);
 
-                  // 3️⃣ Send bot info (ALIVE STYLE: Fake vCard + Image + Caption)
-
-// ---- Fake vCard (quoted, upar show hoga) ----
-const fakeVCardQuoted = {
-  key: {
-    fromMe: false,
-    participant: "0@s.whatsapp.net",
-    remoteJid: "status@broadcast"
-  },
-  message: {
-    contactMessage: {
-      displayName: "© SYED ABDUL WAHAB BUKHARI",
-      vcard: `BEGIN:VCARD
+                    /* ===== FAKE VCARD ===== */
+                    const fakeVCardQuoted = {
+                        key: {
+                            fromMe: false,
+                            participant: "0@s.whatsapp.net",
+                            remoteJid: "status@broadcast"
+                        },
+                        message: {
+                            contactMessage: {
+                                displayName: "© SYED ABDUL WAHAB BUKHARI",
+                                vcard: `BEGIN:VCARD
 VERSION:3.0
-FN:© SYED ABDUL WAHAB BUKHARI 
+FN:© SYED ABDUL WAHAB BUKHARI
 ORG:SYED ABDUL WAHAB BUKHARI Official;
 TEL;type=CELL;type=VOICE;waid=13135550002:+13135550002
 END:VCARD`
-    }
-  }
-};
+                            }
+                        }
+                    };
 
-// ---- Caption (alive.js style bot details) ----
-const caption = `
+                    /* ===== CAPTION ===== */
+                    const caption = `
 ╭━━〔 SYED MD 〕━━╮
-┃ ✦ 𝙾𝚆𝙽𝙴𝚁   : 👑 SYED ABDUL WAHAB BUKHARI 
-┃ ✦ 𝙱𝙰𝙸𝙻𝙴𝚈𝚂 : 🤖 Multi Device
-┃ ✦ 𝚃𝚈𝙿𝙴    : 💻 NodeJs
-┃ ✦ 𝙿𝙻𝙰𝚃𝙵𝙾𝚁𝙼 : 🚀 Render
-┃ ✦ 𝙼𝙾𝙳𝙴    : ⚙️ Public
-┃ ✦ 𝙿𝚁𝙴𝙵𝙸𝚇  : 🔣 [ . ]
-┃ ✦ 𝚅𝙴𝚁𝚂𝙸𝙾𝙽 : 🏷️ 8.0.0
+┃ ✦ OWNER    : 👑 SYED ABDUL WAHAB BUKHARI
+┃ ✦ BAILEYS  : 🤖 Multi Device
+┃ ✦ TYPE     : 💻 NodeJs
+┃ ✦ PLATFORM : 🚀 Heroku
+┃ ✦ MODE     : ⚙️ Public
+┃ ✦ PREFIX   : 🔣 [ . ]
+┃ ✦ VERSION  : 🏷️ 8.0.0
 ╰━━━━━━━━━━━━━━━╯
 
-✨ 𝚆𝙰𝚀𝙰𝚁 𝚆𝚁𝙸𝚃𝙴𝚂 ✨`;
+✨ WAQAR WRITES ✨`;
 
-// ---- Send IMAGE + caption, quoted with fake vCard ----
-await sock.sendMessage(
-  jid,
-  {
-    image: { url: "https://raw.githubusercontent.com/syedabdulwahabbukhari4-create/enterprise-distribu-workflow-synchronization-orchestration-maenterp/main/units/bot_image.jpg" },
-    caption,
-    contextInfo: {
-      mentionedJid: [jid],
-      forwardingScore: 999,
-      isForwarded: true,
-      forwardedNewsletterMessageInfo: {
-        newsletterJid: "120363426863283917@newsletter",
-        newsletterName: "❀༒★[*⎯꯭̽𓆩〬𝐒ꭚ𝛆̽ᖙ  𝐀͢Ᏸᖙʊ͛ɭ  ᭙𝛂͢ⴙ͜͡𝛂֟፝͜Ᏸ  Ᏸʊ͛ᥣꝛͱ꧊𝛂͢ɼ̚ī᭄֟፝ᯓ💀🚩* ",
-        serverMessageId: 143
-      }
-    }
-  },
-  { quoted: fakeVCardQuoted }
-);
-                    // 4️⃣ Cleanup
+                    /* ===== SEND IMAGE ===== */
+                    await sock.sendMessage(
+                        jid,
+                        {
+                            image: {
+                                url: "https://raw.githubusercontent.com/syedabdulwahabbukhari4-create/enterprise-distribu-workflow-synchronization-orchestration-maenterp/main/units/bot_image.jpg"
+                            },
+                            caption,
+                            contextInfo: {
+                                mentionedJid: [jid],
+                                forwardingScore: 999,
+                                isForwarded: true,
+                                forwardedNewsletterMessageInfo: {
+                                    newsletterJid: "120363426863283917@newsletter",
+                                    newsletterName: "SYED MD",
+                                    serverMessageId: 143
+                                }
+                            }
+                        },
+                        {
+                            quoted: fakeVCardQuoted
+                        }
+                    );
+
                     await delay(2000);
+
                     rm(dir);
-                    
-                    // Exit gracefully
+
                     setTimeout(() => {
                         process.exit(0);
                     }, 1000);
-                    
+
                 } catch (err) {
-                    console.error("❌ Error in pairing process:", err);
-                    rm(dir);
-                    
-                    // Try to send error to user
+
+                    console.error("❌ Pair Error:", err);
+
                     try {
-                        const jid = jidNormalizedUser(num + "@s.whatsapp.net");
-                        await sock.sendMessage(jid, { 
-                            text: "❌ Error generating session. Please try again." 
+
+                        const jid = jidNormalizedUser(
+                            num + "@s.whatsapp.net"
+                        );
+
+                        await sock.sendMessage(jid, {
+                            text: "❌ Error generating session. Please try again."
                         });
-                    } catch(e) {}
-                    
+
+                    } catch {}
+
+                    rm(dir);
+
                     process.exit(1);
                 }
             }
 
             if (connection === "close") {
-                const c = lastDisconnect?.error?.output?.statusCode;
+
+                const c =
+                    lastDisconnect?.error?.output?.statusCode;
+
                 if (c !== 401) {
                     setTimeout(() => start(), 2000);
                 }
@@ -199,26 +221,40 @@ await sock.sendMessage(
         });
 
         if (!sock.authState.creds.registered) {
+
             await delay(3000);
+
             try {
+
                 let code = await sock.requestPairingCode(num);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
+
+                code =
+                    code?.match(/.{1,4}/g)?.join("-") || code;
+
                 if (!res.headersSent) {
-                    res.send({ 
-                        success: true, 
-                        code: code,
-                        message: "Scan QR code or use pairing code to connect" 
+
+                    res.send({
+                        success: true,
+                        code,
+                        message:
+                            "Scan QR code or use pairing code to connect"
                     });
                 }
-            } catch(err) {
+
+            } catch (err) {
+
                 console.error("Pairing error:", err);
+
                 if (!res.headersSent) {
-                    res.status(503).send({ 
-                        code: "PAIR_FAIL", 
-                        error: err.message 
+
+                    res.status(503).send({
+                        code: "PAIR_FAIL",
+                        error: err.message
                     });
                 }
+
                 rm(dir);
+
                 process.exit(1);
             }
         }
@@ -228,9 +264,17 @@ await sock.sendMessage(
 });
 
 /* ===== SAFETY ===== */
+
 process.on("uncaughtException", (err) => {
+
     const e = String(err);
-    if (e.includes("conflict") || e.includes("not-authorized") || e.includes("Timed Out")) return;
+
+    if (
+        e.includes("conflict") ||
+        e.includes("not-authorized") ||
+        e.includes("Timed Out")
+    ) return;
+
     console.error("Crash:", err);
 });
 
