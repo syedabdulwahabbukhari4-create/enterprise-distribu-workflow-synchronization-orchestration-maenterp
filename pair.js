@@ -32,7 +32,7 @@ const credsData = fs.readFileSync(credsPath, "utf-8");
 const base64Creds = Buffer.from(credsData).toString("base64");
 
 return {
-sessionId: "SYED~",
+sessionId: "ABDUL-MD~",
 encodedData: base64Creds
 };
 
